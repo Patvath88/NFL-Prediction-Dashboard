@@ -12,19 +12,17 @@ from datetime import datetime
 st.set_page_config(page_title="NFL Active Player Predictor — Live ESPN", layout="wide")
 
 st.title("🏈 NFL Active Player Predictor — Live 2025 Season")
-st.caption("Pulls live NFL player data directly from ESPN and predicts next-game performance using machine learning.")
+st.caption("Pulls live NFL data from ESPN and predicts next-game player performance using ML models.")
 
 CURRENT_YEAR = datetime.now().year
 
 # =====================================================
-# FETCH TEAM LIST
+# TEAM LIST
 # =====================================================
 @st.cache_data(ttl=1800)
 def fetch_team_rosters():
-    """Fetch team info from ESPN NFL API."""
     url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams"
-    resp = requests.get(url)
-    data = resp.json()
+    data = requests.get(url).json()
     teams = []
     for t in data["sports"][0]["leagues"][0]["teams"]:
         info = t["team"]
@@ -40,11 +38,11 @@ selected_team = st.selectbox("Select a team", teams_df["team"].tolist())
 team_id = teams_df.loc[teams_df["team"] == selected_team, "team_id"].iloc[0]
 
 # =====================================================
-# FETCH LIVE PLAYER DATA (DEFENSIVE)
+# DEFENSIVE FETCH FOR PLAYERS
 # =====================================================
 @st.cache_data(ttl=1800)
 def fetch_team_players(team_id, selected_team):
-    """Fetch active players from ESPN API and normalize safely."""
+    """Fetch players from ESPN safely regardless of JSON format."""
     url = f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/{team_id}/roster"
     try:
         r = requests.get(url)
@@ -56,19 +54,19 @@ def fetch_team_players(team_id, selected_team):
     for group in data.get("athletes", []):
         for p in group.get("items", []):
             stats = p.get("stats", [])
-            status_field = p.get("status", {})
+            raw_status = p.get("status", "")
 
-            # Handle different formats of the "status" field
-            if isinstance(status_field, str):
-                status_desc = status_field
-            elif isinstance(status_field, dict):
-                status_desc = status_field.get("type", {}).get("description", "Unknown")
-            elif isinstance(status_field, list):
-                status_desc = (
-                    status_field[0].get("type", {}).get("description", "Unknown")
-                    if status_field and isinstance(status_field[0], dict)
-                    else "Unknown"
-                )
+            # Universal safe status conversion
+            if isinstance(raw_status, str):
+                status_desc = raw_status
+            elif isinstance(raw_status, dict):
+                status_desc = str(raw_status.get("type", {}).get("description", "Unknown"))
+            elif isinstance(raw_status, list):
+                # sometimes comes as list of dicts
+                if raw_status and isinstance(raw_status[0], dict):
+                    status_desc = str(raw_status[0].get("type", {}).get("description", "Unknown"))
+                else:
+                    status_desc = "Unknown"
             else:
                 status_desc = "Unknown"
 
@@ -79,16 +77,17 @@ def fetch_team_players(team_id, selected_team):
                 "team": selected_team
             }
 
-            # Flatten any numeric stats if available
+            # Flatten numeric stats if available
             if isinstance(stats, list):
                 for s in stats:
-                    if isinstance(s, dict) and "name" in s and "value" in s:
-                        player_info[s["name"]] = s["value"]
-
+                    if isinstance(s, dict):
+                        name = s.get("name")
+                        val = s.get("value")
+                        if name and isinstance(val, (int, float)):
+                            player_info[name] = val
             players.append(player_info)
 
-    df = pd.DataFrame(players)
-    return df
+    return pd.DataFrame(players)
 
 df = fetch_team_players(team_id, selected_team)
 
@@ -97,7 +96,7 @@ if df.empty:
     st.stop()
 
 # =====================================================
-# FILTER ACTIVE PLAYERS
+# ACTIVE-PLAYER FILTER
 # =====================================================
 if "status" in df.columns:
     df = df[df["status"].astype(str).str.lower().str.contains("active", na=False)]
@@ -129,10 +128,9 @@ if not numeric_cols:
 
 selected_target = st.selectbox("Stat to predict", numeric_cols)
 
-# Train using team-level data
 data = df[["name"] + numeric_cols].dropna()
 if len(data) < 5:
-    st.warning("Not enough data to train a model yet.")
+    st.warning("Not enough team data to train a model yet.")
     st.stop()
 
 X = data.drop(columns=[selected_target, "name"]).fillna(0)
