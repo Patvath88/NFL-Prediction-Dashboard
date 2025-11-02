@@ -12,6 +12,9 @@ from sklearn.model_selection import train_test_split
 import nfl_data_py as nfl
 import requests
 
+st.dataframe(stats_df, use_container_width=True, height=800)
+st.download_button("📥 Download Full Data", stats_df.to_csv(index=False).encode(), "nfl_stats.csv")
+
 st.set_page_config(page_title="NFL Prop Predictor — Free Stats", layout="wide")
 st.title("🏈 NFL Prop Predictor — Free Stats Edition")
 st.caption("Live player prop predictor using free NFL data sources (nfl_data_py) and odds feeds.")
