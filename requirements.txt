@@ -3,6 +3,4 @@ pandas
 numpy
 scikit-learn
 xgboost
-rapidfuzz
 nfl_data_py
-requests
