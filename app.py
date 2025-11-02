@@ -8,40 +8,36 @@ from xgboost import XGBRegressor
 from sklearn.metrics import r2_score
 import nfl_data_py as nfl
 
-st.set_page_config(page_title="NFL Active Player Predictor", layout="wide")
+st.set_page_config(page_title="NFL Active Player Predictor — 2025 Season", layout="wide")
 
-st.title("🏈 NFL Active Player Predictor — Current Season")
-st.caption("View active players' stats and predict next-game performance using adaptive ML models.")
+st.title("🏈 NFL Active Player Predictor — 2025 Season")
+st.caption("View active player stats and predict next-game performance using current 2025 data only.")
 
 # =====================================================
-# LOAD DATA WITH FALLBACK
+# LOAD 2025 DATA SAFELY (no fallback)
 # =====================================================
 @st.cache_data(ttl=1800)
-def load_latest_available_data(preferred_year=2025):
-    """Load latest available NFL weekly data via nfl_data_py, fallback to previous year."""
+def load_2025_data():
+    """Load 2025 weekly NFL data and filter for players with recorded stats."""
     try:
-        df = nfl.import_weekly_data([preferred_year])
-        if not df.empty:
-            return df, preferred_year
-    except Exception:
-        pass
+        df = nfl.import_weekly_data([2025])
+        df = df[df["season_type"] == "REG"]
+        df = df[df["fantasy_points"].notna()]  # must have played
+        df = df[df["player_display_name"].notna()]
+        return df
+    except Exception as e:
+        st.error("⚠️ 2025 season data isn't yet available from nfl_data_py. It will appear once the season is active.")
+        st.stop()
 
-    for y in range(preferred_year - 1, 2018, -1):
-        try:
-            df = nfl.import_weekly_data([y])
-            if not df.empty:
-                return df, y
-        except Exception:
-            continue
-    raise RuntimeError("No valid NFL data found.")
+df = load_2025_data()
+st.caption("📅 Showing only players and stats from the 2025 NFL regular season.")
 
-df, active_year = load_latest_available_data()
-st.caption(f"📅 Using {active_year} season data (latest available on nfl_data_py)")
-
-# keep only players who recorded fantasy points (played)
-df = df[df["season_type"] == "REG"]
-df = df[df["fantasy_points"].notna()]
-df = df[df["player_display_name"].notna()]
+# =====================================================
+# FILTER ACTIVE PLAYERS (who have played at least once)
+# =====================================================
+active_players = df.groupby("player_display_name")["week"].nunique()
+active_players = active_players[active_players > 0].index.tolist()
+df = df[df["player_display_name"].isin(active_players)]
 
 # =====================================================
 # TEAM + PLAYER SELECTION
@@ -59,22 +55,25 @@ if not selected_player:
 
 player_df = team_df[team_df["player_display_name"] == selected_player]
 if player_df.empty:
-    st.warning("No data found for this player.")
+    st.warning("No 2025 weekly data found for this player.")
     st.stop()
 
 # =====================================================
-# DISPLAY PLAYER STATS
+# DISPLAY PLAYER STATS (2025 GAMES ONLY)
 # =====================================================
-st.subheader(f"📊 {selected_player} — {active_year} Season Stats")
+st.subheader(f"📊 {selected_player} — 2025 Regular Season Stats")
+
 cols = [
     "week","opponent_team","passing_yards","passing_tds",
-    "rushing_yards","rushing_tds","receiving_yards","receptions","fantasy_points"
+    "rushing_yards","rushing_tds","receiving_yards",
+    "receptions","fantasy_points"
 ]
 cols = [c for c in cols if c in player_df.columns]
+
 st.dataframe(player_df[cols].fillna(0), use_container_width=True, height=400)
 
 # =====================================================
-# AUTO PREDICTION ENGINE (with fallback)
+# PREDICTION ENGINE
 # =====================================================
 numeric_cols = player_df.select_dtypes(include=[np.number]).columns.tolist()
 target_candidates = [
@@ -82,6 +81,7 @@ target_candidates = [
     "rushing_tds","receiving_yards","receptions","fantasy_points"
 ]
 targets = [t for t in target_candidates if t in numeric_cols]
+
 if not targets:
     st.warning("No numeric stats found for this player.")
     st.stop()
@@ -91,19 +91,22 @@ selected_target = st.selectbox("Stat to predict for next game", targets)
 feature_cols = [c for c in numeric_cols if c not in ["week","season","game_key",selected_target]]
 data = player_df[feature_cols + [selected_target]].dropna()
 
-# === Fallback if player has too few games ===
+# === Fallback: position or league model if player lacks 3+ weeks ===
 if len(data) < 3:
     pos = player_df["position"].iloc[0] if "position" in player_df.columns else None
     if pos:
-        st.info(f"Not enough personal data for {selected_player}. Using {pos} group model.")
+        st.info(f"Not enough personal data for {selected_player}. Using {pos} group model for 2025 season.")
         data = df[df["position"] == pos][feature_cols + [selected_target]].dropna()
     if len(data) < 3:
-        st.info("Using league-wide data for fallback prediction.")
+        st.info("Using league-wide 2025 data for fallback prediction.")
         data = df[feature_cols + [selected_target]].dropna()
 
-# === Train model ===
 X = data[feature_cols]
 y = data[selected_target]
+if len(X) < 3:
+    st.warning("Still not enough 2025 data for this stat. Try another category.")
+    st.stop()
+
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42)
 
 models = {
@@ -144,7 +147,7 @@ st.caption(f"Best model: {results_df.loc[results_df['R²'].idxmax(), 'Model']} (
 # DOWNLOAD BUTTON
 # =====================================================
 st.download_button(
-    "📥 Download Player's Season Stats",
+    "📥 Download Player's 2025 Season Stats",
     player_df.to_csv(index=False).encode(),
-    file_name=f"{selected_player}_{active_year}_stats.csv"
+    file_name=f"{selected_player}_2025_stats.csv"
 )
