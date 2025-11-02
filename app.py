@@ -17,15 +17,16 @@ st.caption("Pulls live NFL data from ESPN and predicts next-game player performa
 CURRENT_YEAR = datetime.now().year
 
 # =====================================================
-# FETCH LIVE PLAYER DATA FROM ESPN
+# FETCH LIVE TEAM LIST
 # =====================================================
 @st.cache_data(ttl=1800)
 def fetch_team_rosters():
-    """Fetch live rosters and stats from ESPN NFL API."""
-    teams_url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams"
-    teams_data = requests.get(teams_url).json()
+    """Fetch live team list from ESPN NFL API."""
+    url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams"
+    resp = requests.get(url)
+    data = resp.json()
     teams = []
-    for t in teams_data["sports"][0]["leagues"][0]["teams"]:
+    for t in data["sports"][0]["leagues"][0]["teams"]:
         info = t["team"]
         teams.append({
             "team_id": info["id"],
@@ -38,51 +39,66 @@ teams_df = fetch_team_rosters()
 selected_team = st.selectbox("Select a team", teams_df["team"].tolist())
 team_id = teams_df.loc[teams_df["team"] == selected_team, "team_id"].iloc[0]
 
+# =====================================================
+# FETCH PLAYER DATA SAFELY
+# =====================================================
 @st.cache_data(ttl=1800)
-def fetch_team_players(team_id):
-    """Fetch active player stats for a team."""
+def fetch_team_players(team_id, selected_team):
+    """Fetch active player stats from ESPN API and normalize safely."""
     roster_url = f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/{team_id}/roster"
-    roster_data = requests.get(roster_url).json()
+    r = requests.get(roster_url)
+    data = r.json()
     players = []
-    for a in roster_data.get("athletes", []):
-        for player in a.get("items", []):
-            stats = player.get("stats", [])
-            player_data = {
-                "name": player.get("displayName"),
-                "position": player.get("position", {}).get("abbreviation"),
-                "status": player.get("status", {}).get("type", {}).get("description", "Active"),
-                "team": selected_team,
+    for a in data.get("athletes", []):
+        for p in a.get("items", []):
+            stats = p.get("stats", [])
+            status_field = p.get("status", {})
+            # Defensive parsing for status (sometimes string, sometimes dict)
+            if isinstance(status_field, str):
+                status_desc = status_field
+            elif isinstance(status_field, dict):
+                status_desc = status_field.get("type", {}).get("description", "Unknown")
+            else:
+                status_desc = "Unknown"
+
+            player_info = {
+                "name": p.get("displayName"),
+                "position": p.get("position", {}).get("abbreviation", ""),
+                "status": status_desc,
+                "team": selected_team
             }
-            # Flatten any stat dictionaries (if present)
-            for s in stats:
-                if isinstance(s, dict) and "name" in s and "value" in s:
-                    player_data[s["name"]] = s["value"]
-            players.append(player_data)
+            # Flatten numeric stats (if present)
+            if isinstance(stats, list):
+                for s in stats:
+                    if isinstance(s, dict) and "name" in s and "value" in s:
+                        player_info[s["name"]] = s["value"]
+            players.append(player_info)
     return pd.DataFrame(players)
 
-df = fetch_team_players(team_id)
+df = fetch_team_players(team_id, selected_team)
 
 if df.empty:
-    st.error("No live player data found for this team.")
+    st.error("No live player data found for this team (ESPN returned empty).")
     st.stop()
 
-# Filter active players with valid stat data
+# Filter to active players with numeric data
 numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
 if not numeric_cols:
-    st.warning("No numeric stats yet for this team.")
+    st.warning("No numeric stats yet for this team — try a different one.")
     st.stop()
 
-active_df = df.copy()
-st.caption(f"📅 Live data for {selected_team} — {CURRENT_YEAR} Season")
+df = df[df["status"].str.lower().str.contains("active")]
+
+st.caption(f"📅 Live {CURRENT_YEAR} data for {selected_team} (source: ESPN)")
 
 # =====================================================
 # PLAYER SELECTION
 # =====================================================
-players = sorted(active_df["name"].unique())
+players = sorted(df["name"].unique())
 selected_player = st.selectbox("Select a player", players)
-player_df = active_df[active_df["name"] == selected_player]
+player_df = df[df["name"] == selected_player]
 
-st.subheader(f"📊 {selected_player} — Live 2025 Stats (ESPN)")
+st.subheader(f"📊 {selected_player} — Live {CURRENT_YEAR} Stats")
 st.dataframe(player_df, use_container_width=True)
 
 # =====================================================
@@ -90,15 +106,15 @@ st.dataframe(player_df, use_container_width=True)
 # =====================================================
 numeric_cols = player_df.select_dtypes(include=[np.number]).columns.tolist()
 if not numeric_cols:
-    st.warning("No numeric stats available for prediction yet.")
+    st.warning("No numeric stats for this player.")
     st.stop()
 
 selected_target = st.selectbox("Stat to predict", numeric_cols)
 
-# Build fake time-series samples for ML (since ESPN doesn’t expose week-by-week)
-data = active_df[["name"] + numeric_cols].dropna()
+# Build pseudo-sample data (team-wide for training)
+data = df[["name"] + numeric_cols].dropna()
 if len(data) < 5:
-    st.warning("Not enough data points yet to train model. Wait until more games are played.")
+    st.warning("Not enough team data to train a model yet.")
     st.stop()
 
 X = data.drop(columns=[selected_target, "name"]).fillna(0)
@@ -134,7 +150,6 @@ if best_model is None:
     st.error("Model training failed.")
     st.stop()
 
-# Predict next game
 sample = X.iloc[[-1]]
 pred = best_model.predict(sample)[0]
 st.success(f"**Predicted {selected_target.replace('_',' ').title()}: {pred:.1f}** for next game")
