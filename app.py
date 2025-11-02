@@ -8,43 +8,48 @@ from xgboost import XGBRegressor
 from sklearn.metrics import r2_score
 import nfl_data_py as nfl
 
-st.set_page_config(page_title="NFL Player Predictor", layout="wide")
+st.set_page_config(page_title="NFL Active Player Predictor", layout="wide")
 
-st.title("🏈 NFL Player Predictor — Free Data Edition")
-st.caption("Search any NFL team to view player stats and predict next-game performances using AutoML.")
+st.title("🏈 NFL Active Player Predictor — 2025 Season")
+st.caption("View stats and predict next-game performance for active players who have played this season.")
 
 # ============ LOAD DATA ============
-@st.cache_data(ttl=3600)
-def load_weekly_data(years):
-    df = nfl.import_weekly_data(years=years)
+@st.cache_data(ttl=1800)
+def load_current_season_data(year):
+    df = nfl.import_weekly_data([year])
     df = df[df["season_type"] == "REG"]
+    df = df[df["fantasy_points"].notna()]  # filter to players who have played
+    df = df[df["player_display_name"].notna()]
     return df
 
-years = st.sidebar.multiselect("Seasons to include", [2021, 2022, 2023, 2024], default=[2023, 2024])
-df = load_weekly_data(years)
+CURRENT_YEAR = 2025
+df = load_current_season_data(CURRENT_YEAR)
 
 if df.empty:
-    st.error("No data found.")
+    st.error("No player data available for the current season yet.")
     st.stop()
+
+# Get active players (played at least one game)
+active_players = df.groupby("player_display_name")["week"].nunique()
+active_players = active_players[active_players > 0].index.tolist()
+df = df[df["player_display_name"].isin(active_players)]
 
 teams = sorted(df["recent_team"].dropna().unique())
 selected_team = st.selectbox("Select a team", teams)
 
-team_df = df[df["recent_team"] == selected_team]
-
-if team_df.empty:
-    st.warning("No players found for that team.")
-    st.stop()
-
-players = sorted(team_df["player_display_name"].dropna().unique())
+team_df = df[df["recent_team"] == selected_team].copy()
+players = sorted(team_df["player_display_name"].unique())
 selected_player = st.selectbox("Select a player", players)
 
-player_df = team_df[team_df["player_display_name"] == selected_player]
-st.subheader(f"📊 Historical Stats for {selected_player}")
-st.dataframe(player_df.tail(10), use_container_width=True, height=400)
+player_df = team_df[team_df["player_display_name"] == selected_player].copy()
 
-# ============ PREDICTION ENGINE (Smart Fallback) ============
+st.subheader(f"📊 {selected_player} — 2025 Season Stats")
+st.dataframe(player_df[[
+    "week","opponent_team","passing_yards","passing_tds",
+    "rushing_yards","rushing_tds","receiving_yards","receptions","fantasy_points"
+]].fillna(0), use_container_width=True, height=400)
 
+# ============ PREDICTION ENGINE ============
 numeric_cols = player_df.select_dtypes(include=[np.number]).columns.tolist()
 target_cols = [
     "passing_yards","passing_tds","rushing_yards",
@@ -52,38 +57,21 @@ target_cols = [
 ]
 targets = [t for t in target_cols if t in numeric_cols]
 if not targets:
-    st.warning("No numeric stats found for prediction.")
+    st.warning("No numeric stats found for this player.")
     st.stop()
 
 selected_target = st.selectbox("Stat to predict for next game", targets)
 
-# Feature engineering
 feature_cols = [c for c in numeric_cols if c not in ["week","season","game_key",selected_target]]
 data = player_df[feature_cols + [selected_target]].dropna()
 
-# Fallback if not enough player data
-if len(data) < 5:
-    st.warning(f"Not enough personal data for {selected_player}. Using {team_df['position'].iloc[0]} group model instead.")
-    pos = player_df["position"].iloc[0] if "position" in player_df.columns else None
-    if pos:
-        group_df = df[df["position"] == pos]
-        group_data = group_df[feature_cols + [selected_target]].dropna()
-        if len(group_data) > 10:
-            data = group_data.copy()
-        else:
-            st.error("Not enough position-level data available to train a model.")
-            st.stop()
-    else:
-        st.error("Position data not available.")
-        st.stop()
+# Ensure enough data
+if len(data) < 3:
+    st.warning("Not enough weekly data for this player this season to train a model.")
+    st.stop()
 
 X = data[feature_cols]
 y = data[selected_target]
-
-if len(X) < 5:
-    st.error("Still not enough data to train. Try selecting a different stat.")
-    st.stop()
-
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42)
 
 models = {
@@ -103,12 +91,12 @@ for name, model in models.items():
         score = r2_score(y_test, preds)
         results.append((name, score))
         if score > best_score:
-            best_score = score
             best_model = model
+            best_score = score
     except Exception:
         continue
 
-results_df = pd.DataFrame(results, columns=["Model", "R²"])
+results_df = pd.DataFrame(results, columns=["Model","R²"])
 st.write("Model Performance Comparison:")
 st.dataframe(results_df, use_container_width=True)
 
@@ -116,8 +104,10 @@ if best_model is None:
     st.error("Model training failed.")
     st.stop()
 
-# Predict next game
 latest_row = X.iloc[[-1]]
 next_pred = best_model.predict(latest_row)[0]
 st.success(f"**Predicted {selected_target.replace('_',' ').title()}: {next_pred:.1f}** for next game")
 st.caption(f"Best model: {results_df.loc[results_df['R²'].idxmax(), 'Model']} (R²={best_score:.3f})")
+
+# Download player stats
+st.download_button("📥 Download Player's 2025 Stats", player_df.to_csv(index=False).encode(), f"{selected_player}_2025.csv")
