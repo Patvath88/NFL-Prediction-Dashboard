@@ -12,16 +12,16 @@ from datetime import datetime
 st.set_page_config(page_title="NFL Active Player Predictor — Live ESPN", layout="wide")
 
 st.title("🏈 NFL Active Player Predictor — Live 2025 Season")
-st.caption("Pulls live NFL data from ESPN and predicts next-game player performance using ML models.")
+st.caption("Pulls live NFL player data directly from ESPN and predicts next-game performance using machine learning.")
 
 CURRENT_YEAR = datetime.now().year
 
 # =====================================================
-# FETCH LIVE TEAM LIST
+# FETCH TEAM LIST
 # =====================================================
 @st.cache_data(ttl=1800)
 def fetch_team_rosters():
-    """Fetch live team list from ESPN NFL API."""
+    """Fetch team info from ESPN NFL API."""
     url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams"
     resp = requests.get(url)
     data = resp.json()
@@ -40,24 +40,35 @@ selected_team = st.selectbox("Select a team", teams_df["team"].tolist())
 team_id = teams_df.loc[teams_df["team"] == selected_team, "team_id"].iloc[0]
 
 # =====================================================
-# FETCH PLAYER DATA SAFELY
+# FETCH LIVE PLAYER DATA (DEFENSIVE)
 # =====================================================
 @st.cache_data(ttl=1800)
 def fetch_team_players(team_id, selected_team):
-    """Fetch active player stats from ESPN API and normalize safely."""
-    roster_url = f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/{team_id}/roster"
-    r = requests.get(roster_url)
-    data = r.json()
+    """Fetch active players from ESPN API and normalize safely."""
+    url = f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/{team_id}/roster"
+    try:
+        r = requests.get(url)
+        data = r.json()
+    except Exception:
+        return pd.DataFrame()
+
     players = []
-    for a in data.get("athletes", []):
-        for p in a.get("items", []):
+    for group in data.get("athletes", []):
+        for p in group.get("items", []):
             stats = p.get("stats", [])
             status_field = p.get("status", {})
-            # Defensive parsing for status (sometimes string, sometimes dict)
+
+            # Handle different formats of the "status" field
             if isinstance(status_field, str):
                 status_desc = status_field
             elif isinstance(status_field, dict):
                 status_desc = status_field.get("type", {}).get("description", "Unknown")
+            elif isinstance(status_field, list):
+                status_desc = (
+                    status_field[0].get("type", {}).get("description", "Unknown")
+                    if status_field and isinstance(status_field[0], dict)
+                    else "Unknown"
+                )
             else:
                 status_desc = "Unknown"
 
@@ -67,34 +78,41 @@ def fetch_team_players(team_id, selected_team):
                 "status": status_desc,
                 "team": selected_team
             }
-            # Flatten numeric stats (if present)
+
+            # Flatten any numeric stats if available
             if isinstance(stats, list):
                 for s in stats:
                     if isinstance(s, dict) and "name" in s and "value" in s:
                         player_info[s["name"]] = s["value"]
+
             players.append(player_info)
-    return pd.DataFrame(players)
+
+    df = pd.DataFrame(players)
+    return df
 
 df = fetch_team_players(team_id, selected_team)
 
 if df.empty:
-    st.error("No live player data found for this team (ESPN returned empty).")
+    st.error("No live player data found for this team (ESPN returned empty). Try another team.")
     st.stop()
 
-# Filter to active players with numeric data
+# =====================================================
+# FILTER ACTIVE PLAYERS
+# =====================================================
+if "status" in df.columns:
+    df = df[df["status"].astype(str).str.lower().str.contains("active", na=False)]
+
 numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
 if not numeric_cols:
-    st.warning("No numeric stats yet for this team — try a different one.")
+    st.warning("No numeric stats yet for this team.")
     st.stop()
 
-df = df[df["status"].str.lower().str.contains("active")]
-
-st.caption(f"📅 Live {CURRENT_YEAR} data for {selected_team} (source: ESPN)")
+st.caption(f"📅 Live {CURRENT_YEAR} data for {selected_team} (via ESPN API)")
 
 # =====================================================
 # PLAYER SELECTION
 # =====================================================
-players = sorted(df["name"].unique())
+players = sorted(df["name"].dropna().unique())
 selected_player = st.selectbox("Select a player", players)
 player_df = df[df["name"] == selected_player]
 
@@ -106,15 +124,15 @@ st.dataframe(player_df, use_container_width=True)
 # =====================================================
 numeric_cols = player_df.select_dtypes(include=[np.number]).columns.tolist()
 if not numeric_cols:
-    st.warning("No numeric stats for this player.")
+    st.warning("No numeric stats found for this player.")
     st.stop()
 
 selected_target = st.selectbox("Stat to predict", numeric_cols)
 
-# Build pseudo-sample data (team-wide for training)
+# Train using team-level data
 data = df[["name"] + numeric_cols].dropna()
 if len(data) < 5:
-    st.warning("Not enough team data to train a model yet.")
+    st.warning("Not enough data to train a model yet.")
     st.stop()
 
 X = data.drop(columns=[selected_target, "name"]).fillna(0)
