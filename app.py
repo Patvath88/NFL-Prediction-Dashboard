@@ -14,40 +14,30 @@ st.title("🏈 NFL Active Player Predictor — 2025 Season")
 st.caption("View stats and predict next-game performance for active players who have played this season.")
 
 # ============ LOAD DATA ============
+# ============ LOAD DATA WITH FALLBACK ============
 @st.cache_data(ttl=1800)
-def load_current_season_data(year):
-    df = nfl.import_weekly_data([year])
-    df = df[df["season_type"] == "REG"]
-    df = df[df["fantasy_points"].notna()]  # filter to players who have played
-    df = df[df["player_display_name"].notna()]
-    return df
+def load_latest_available_data(preferred_year=2025):
+    try:
+        df = nfl.import_weekly_data([preferred_year])
+        if df.empty:
+            raise ValueError("Empty dataset")
+        return df, preferred_year
+    except Exception:
+        # fallback one year at a time until a valid file loads
+        for y in range(preferred_year - 1, 2018, -1):
+            try:
+                df = nfl.import_weekly_data([y])
+                if not df.empty:
+                    return df, y
+            except Exception:
+                continue
+        raise RuntimeError("No valid NFL weekly data found in nfl_data_py mirror.")
 
-CURRENT_YEAR = 2025
-df = load_current_season_data(CURRENT_YEAR)
-
-if df.empty:
-    st.error("No player data available for the current season yet.")
-    st.stop()
-
-# Get active players (played at least one game)
-active_players = df.groupby("player_display_name")["week"].nunique()
-active_players = active_players[active_players > 0].index.tolist()
-df = df[df["player_display_name"].isin(active_players)]
-
-teams = sorted(df["recent_team"].dropna().unique())
-selected_team = st.selectbox("Select a team", teams)
-
-team_df = df[df["recent_team"] == selected_team].copy()
-players = sorted(team_df["player_display_name"].unique())
-selected_player = st.selectbox("Select a player", players)
-
-player_df = team_df[team_df["player_display_name"] == selected_player].copy()
-
-st.subheader(f"📊 {selected_player} — 2025 Season Stats")
-st.dataframe(player_df[[
-    "week","opponent_team","passing_yards","passing_tds",
-    "rushing_yards","rushing_tds","receiving_yards","receptions","fantasy_points"
-]].fillna(0), use_container_width=True, height=400)
+df, active_year = load_latest_available_data()
+st.caption(f"📅 Using {active_year} season data (latest available on nfl_data_py)")
+df = df[df["season_type"] == "REG"]
+df = df[df["fantasy_points"].notna()]  # only players who played
+df = df[df["player_display_name"].notna()]
 
 # ============ PREDICTION ENGINE ============
 numeric_cols = player_df.select_dtypes(include=[np.number]).columns.tolist()
