@@ -43,7 +43,8 @@ player_df = team_df[team_df["player_display_name"] == selected_player]
 st.subheader(f"📊 Historical Stats for {selected_player}")
 st.dataframe(player_df.tail(10), use_container_width=True, height=400)
 
-# ============ PREDICTION ENGINE ============
+# ============ PREDICTION ENGINE (Smart Fallback) ============
+
 numeric_cols = player_df.select_dtypes(include=[np.number]).columns.tolist()
 target_cols = [
     "passing_yards","passing_tds","rushing_yards",
@@ -60,12 +61,28 @@ selected_target = st.selectbox("Stat to predict for next game", targets)
 feature_cols = [c for c in numeric_cols if c not in ["week","season","game_key",selected_target]]
 data = player_df[feature_cols + [selected_target]].dropna()
 
+# Fallback if not enough player data
 if len(data) < 5:
-    st.warning("Not enough data to train a model.")
-    st.stop()
+    st.warning(f"Not enough personal data for {selected_player}. Using {team_df['position'].iloc[0]} group model instead.")
+    pos = player_df["position"].iloc[0] if "position" in player_df.columns else None
+    if pos:
+        group_df = df[df["position"] == pos]
+        group_data = group_df[feature_cols + [selected_target]].dropna()
+        if len(group_data) > 10:
+            data = group_data.copy()
+        else:
+            st.error("Not enough position-level data available to train a model.")
+            st.stop()
+    else:
+        st.error("Position data not available.")
+        st.stop()
 
 X = data[feature_cols]
 y = data[selected_target]
+
+if len(X) < 5:
+    st.error("Still not enough data to train. Try selecting a different stat.")
+    st.stop()
 
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42)
 
@@ -103,8 +120,4 @@ if best_model is None:
 latest_row = X.iloc[[-1]]
 next_pred = best_model.predict(latest_row)[0]
 st.success(f"**Predicted {selected_target.replace('_',' ').title()}: {next_pred:.1f}** for next game")
-
 st.caption(f"Best model: {results_df.loc[results_df['R²'].idxmax(), 'Model']} (R²={best_score:.3f})")
-
-# Optional: download player data
-st.download_button("📥 Download Player Stats", player_df.to_csv(index=False).encode(), f"{selected_player}_stats.csv")
