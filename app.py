@@ -12,7 +12,7 @@ from datetime import datetime
 st.set_page_config(page_title="NFL Active Player Predictor — Live ESPN", layout="wide")
 
 st.title("🏈 NFL Active Player Predictor — Live 2025 Season")
-st.caption("Pulls live NFL data from ESPN and predicts next-game player performance using ML models.")
+st.caption("Pulls live NFL data from ESPN and predicts next-game player performance using machine learning models.")
 
 CURRENT_YEAR = datetime.now().year
 
@@ -38,11 +38,11 @@ selected_team = st.selectbox("Select a team", teams_df["team"].tolist())
 team_id = teams_df.loc[teams_df["team"] == selected_team, "team_id"].iloc[0]
 
 # =====================================================
-# DEFENSIVE FETCH FOR PLAYERS
+# FETCH LIVE PLAYER DATA SAFELY
 # =====================================================
 @st.cache_data(ttl=1800)
 def fetch_team_players(team_id, selected_team):
-    """Fetch players from ESPN safely regardless of JSON format."""
+    """Fetch players from ESPN safely regardless of how 'status' is formatted."""
     url = f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/{team_id}/roster"
     try:
         r = requests.get(url)
@@ -54,21 +54,26 @@ def fetch_team_players(team_id, selected_team):
     for group in data.get("athletes", []):
         for p in group.get("items", []):
             stats = p.get("stats", [])
-            raw_status = p.get("status", "")
+            raw_status = p.get("status", None)
 
-            # Universal safe status conversion
+            # ✨ Universal safe conversion — covers str, dict, list, or None
+            status_desc = "Unknown"
             if isinstance(raw_status, str):
                 status_desc = raw_status
             elif isinstance(raw_status, dict):
-                status_desc = str(raw_status.get("type", {}).get("description", "Unknown"))
-            elif isinstance(raw_status, list):
-                # sometimes comes as list of dicts
-                if raw_status and isinstance(raw_status[0], dict):
-                    status_desc = str(raw_status[0].get("type", {}).get("description", "Unknown"))
+                # Try multiple keys since ESPN isn't consistent
+                if "type" in raw_status and isinstance(raw_status["type"], dict):
+                    status_desc = raw_status["type"].get("description", str(raw_status["type"]))
+                elif "type" in raw_status:
+                    status_desc = str(raw_status["type"])
+                elif "description" in raw_status:
+                    status_desc = str(raw_status["description"])
                 else:
                     status_desc = "Unknown"
-            else:
-                status_desc = "Unknown"
+            elif isinstance(raw_status, list):
+                first = raw_status[0] if raw_status else None
+                if isinstance(first, dict):
+                    status_desc = first.get("description") or first.get("type") or "Unknown"
 
             player_info = {
                 "name": p.get("displayName"),
@@ -85,6 +90,7 @@ def fetch_team_players(team_id, selected_team):
                         val = s.get("value")
                         if name and isinstance(val, (int, float)):
                             player_info[name] = val
+
             players.append(player_info)
 
     return pd.DataFrame(players)
@@ -96,7 +102,7 @@ if df.empty:
     st.stop()
 
 # =====================================================
-# ACTIVE-PLAYER FILTER
+# FILTER ACTIVE PLAYERS
 # =====================================================
 if "status" in df.columns:
     df = df[df["status"].astype(str).str.lower().str.contains("active", na=False)]
@@ -158,7 +164,7 @@ for name, model in models.items():
     except Exception:
         continue
 
-results_df = pd.DataFrame(results, columns=["Model","R²"])
+results_df = pd.DataFrame(results, columns=["Model", "R²"])
 st.write("Model Performance Comparison:")
 st.dataframe(results_df, use_container_width=True)
 
