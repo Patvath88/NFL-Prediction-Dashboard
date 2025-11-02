@@ -151,20 +151,32 @@ def train_model(df, target_col):
     return rf, xgb, X.columns
 
 # --- Market map and selection ---
+# --- Safer market map and selection ---
 market_map = {
-    "pass_yds": "passing_yards",
-    "rush_yds": "rushing_yards",
-    "rec_yds": "receiving_yards",
-    "receptions": "receptions",
-    "any_td": "rushing_tds"
+    "pass_yds": ["passing_yards", "pass_yards", "pass_yds"],
+    "rush_yds": ["rushing_yards", "rush_yards", "rush_yds"],
+    "rec_yds": ["receiving_yards", "rec_yards", "rec_yds"],
+    "receptions": ["receptions", "targets"],
+    "any_td": ["rushing_tds", "receiving_tds", "passing_tds", "touchdowns"]
 }
 
-# Guard against empty or None selections
-if markets:
-    selected_market = st.selectbox("Market to model", markets, index=0)
+selected_market = st.selectbox("Market to model", markets, index=0 if markets else 0)
+
+# Try to find a matching column dynamically
+target_candidates = market_map.get(selected_market, [])
+target_col = next((c for c in target_candidates if c in stats_df.columns), None)
+
+if target_col is None:
+    st.warning(f"No valid stat column found for {selected_market}. Available columns: {list(stats_df.columns)[:20]}")
+    model_tuple = None
 else:
-    st.warning("No markets selected — please choose at least one.")
-    selected_market = None
+    st.info(f"Using '{target_col}' as the target variable.")
+    model_tuple = train_model(stats_df, target_col)
+    if model_tuple:
+        st.success(f"Model trained successfully for {target_col}")
+    else:
+        st.warning("Model training failed — no valid numeric data found.")
+
 
 # Determine target column safely
 target_col = market_map.get(selected_market, None)
