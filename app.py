@@ -150,6 +150,7 @@ def train_model(df, target_col):
     xgb.fit(X_train, y_train)
     return rf, xgb, X.columns
 
+# --- Market map and selection ---
 market_map = {
     "pass_yds": "passing_yards",
     "rush_yds": "rushing_yards",
@@ -158,13 +159,29 @@ market_map = {
     "any_td": "rushing_tds"
 }
 
-selected_market = st.selectbox("Market to model", markets)
-target_col = market_map[selected_market]
-model_tuple = train_model(stats_df, target_col) if target_col in stats_df.columns else None
-if model_tuple:
-    st.success(f"Model trained successfully for {target_col}")
+# Guard against empty or None selections
+if markets:
+    selected_market = st.selectbox("Market to model", markets, index=0)
 else:
-    st.warning("Target column not found in data")
+    st.warning("No markets selected — please choose at least one.")
+    selected_market = None
+
+# Determine target column safely
+target_col = market_map.get(selected_market, None)
+if target_col is None:
+    st.warning("Selected market not recognized or unavailable.")
+    model_tuple = None
+else:
+    if target_col in stats_df.columns:
+        model_tuple = train_model(stats_df, target_col)
+        if model_tuple:
+            st.success(f"Model trained successfully for {target_col}")
+        else:
+            st.warning("Model training failed — no valid numeric data found.")
+    else:
+        st.warning(f"Target column '{target_col}' not found in player stats.")
+        model_tuple = None
+
 
 # Predictions and slip builder
 if model_tuple and not odds_df.empty:
