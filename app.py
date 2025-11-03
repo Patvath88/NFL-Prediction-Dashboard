@@ -46,11 +46,30 @@ def get_espn_season_stats():
 
 @st.cache_data(ttl=600)
 def get_espn_defense_ranks():
-    """Defensive ranks vs position."""
-    url="https://site.api.espn.com/apis/site/v2/sports/football/nfl/statistics"
-    js=requests.get(url).json()
-    df=pd.json_normalize(js["categories"])
-    return df[["name","displayName","rank"]] if "rank" in df else pd.DataFrame()
+    """Pull defensive rankings safely from ESPN stats API."""
+    url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/statistics"
+    try:
+        js = requests.get(url, timeout=10).json()
+        cats = []
+        # ESPN sometimes nests stats inside 'children'
+        if "categories" in js:
+            cats = js["categories"]
+        elif "children" in js and isinstance(js["children"], list):
+            for child in js["children"]:
+                if "categories" in child:
+                    cats += child["categories"]
+        else:
+            return pd.DataFrame()
+
+        # Flatten & find any category that contains team defensive ranks
+        df = pd.json_normalize(cats, errors="ignore")
+        defense_cols = [c for c in df.columns if "defense" in c.lower() or "rank" in c.lower()]
+        keep_cols = ["name", "displayName"] + defense_cols if defense_cols else ["name", "displayName"]
+        return df[keep_cols].fillna("-")
+    except Exception as e:
+        st.warning(f"⚠️ Could not load defense ranks from ESPN: {e}")
+        return pd.DataFrame()
+
 
 # --- Merge player + stats ---
 players_df=get_players()
