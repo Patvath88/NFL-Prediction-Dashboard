@@ -76,20 +76,33 @@ with col2:
 # ==========================================================
 # SIMULATED PERFORMANCE METRICS (since Sleeper API lacks per-game stats)
 # ==========================================================
-np.random.seed(42)
-player_df["recent_yards"] = np.random.randint(30, 150, 5)
-player_df["recent_tds"] = np.random.randint(0, 3, 5)
-player_df["fantasy_points"] = player_df["recent_yards"] * 0.1 + player_df["recent_tds"] * 6
-
+# ==========================================================
+# SIMULATED PERFORMANCE METRICS (since Sleeper API lacks per-game stats)
+# ==========================================================
 st.markdown("### 📊 Simulated Recent Game Performance")
+
+np.random.seed(42)
+
+# Make a new small DataFrame for 5 simulated weeks
 sim_data = pd.DataFrame({
     "Game Week": [f"Week {i+1}" for i in range(5)],
-    "Yards": player_df["recent_yards"],
-    "TDs": player_df["recent_tds"],
-    "Fantasy Points": player_df["fantasy_points"]
+    "Yards": np.random.randint(30, 150, 5),
+    "TDs": np.random.randint(0, 3, 5)
 })
-fig = px.bar(sim_data, x="Game Week", y="Fantasy Points", color="Yards", title=f"{selected_player} Recent Game Simulation")
+sim_data["Fantasy Points"] = sim_data["Yards"] * 0.1 + sim_data["TDs"] * 6
+
+# Show table and chart
+st.dataframe(sim_data, use_container_width=True)
+
+fig = px.bar(
+    sim_data,
+    x="Game Week",
+    y="Fantasy Points",
+    color="Yards",
+    title=f"{selected_player} — Simulated Recent Game Output",
+)
 st.plotly_chart(fig, use_container_width=True)
+
 
 # ==========================================================
 # SIMPLE MODEL PREDICTION (simulate next game output)
