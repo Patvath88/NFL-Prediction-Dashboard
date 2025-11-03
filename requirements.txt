@@ -2,7 +2,5 @@ streamlit
 pandas
 numpy
 scikit-learn
-xgboost
-requests
 plotly
-sportsipy
+requests
