@@ -35,7 +35,6 @@ CURRENT_YEAR = 2025
 
 # --------------- DATA LOADERS -----------------
 @st.cache_data(ttl=600)
-de@st.cache_data(ttl=600)
 def get_players():
     """Fetch all *currently rostered* NFL players from Sleeper API."""
     url = "https://api.sleeper.app/v1/players/nfl"
