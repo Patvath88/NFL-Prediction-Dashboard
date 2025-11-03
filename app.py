@@ -51,24 +51,33 @@ CURRENT_YEAR = datetime.now().year
 # -----------------------------------------------------------
 @st.cache_data(ttl=600)
 def get_players():
-    """Fetch all active NFL players."""
+    """Fetch all active NFL players safely from Sleeper API."""
     url = "https://api.sleeper.app/v1/players/nfl"
     r = requests.get(url)
     players = r.json()
     data = []
     for pid, info in players.items():
         if info.get("status") == "Active" and info.get("team"):
+            # Safely handle fantasy_positions
+            positions = info.get("fantasy_positions")
+            if isinstance(positions, list):
+                pos_str = ",".join(positions)
+            elif isinstance(positions, str):
+                pos_str = positions
+            else:
+                pos_str = "N/A"
             data.append({
                 "player_id": pid,
                 "name": info.get("full_name"),
                 "team": info.get("team"),
-                "position": ",".join(info.get("fantasy_positions", [])),
+                "position": pos_str,
                 "age": info.get("age"),
                 "height": info.get("height"),
                 "weight": info.get("weight"),
                 "college": info.get("college"),
             })
     return pd.DataFrame(data)
+
 
 @st.cache_data(ttl=600)
 def get_live_stats():
