@@ -1,3 +1,14 @@
+# --- ESPN + Sleeper NFL Dashboard (Base Scaffold) ---
+import streamlit as st
+import pandas as pd
+import numpy as np
+import requests
+import plotly.express as px
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.linear_model import Ridge
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import make_pipeline
+
 @st.cache_data(ttl=600)
 def get_espn_season_stats():
     """
