@@ -34,15 +34,53 @@ def get_players():
 
 @st.cache_data(ttl=600)
 def get_espn_season_stats():
-    """Season totals from ESPN."""
-    url="https://site.api.espn.com/apis/site/v2/sports/football/nfl/statistics"
-    r=requests.get(url,timeout=10)
-    js=r.json(); cats=[]
-    for cat in js.get("categories",[]): cats+=cat.get("stats",[])
-    df=pd.json_normalize(cats)
-    df=df.rename(columns={"athlete.displayName":"name"})
-    keep=[c for c in df.columns if c.endswith("value") or c=="name"]
-    return df[keep].dropna(subset=["name"])
+    """
+    Hybrid stat puller: tries ESPN live JSON, falls back to NFLFastR public CSV feed.
+    Guarantees non-empty data for 2025 season.
+    """
+    try:
+        url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/statistics"
+        js = requests.get(url, timeout=10).json()
+        cats = []
+        if "children" in js:
+            for child in js["children"]:
+                if "categories" in child:
+                    cats += child["categories"]
+        elif "categories" in js:
+            cats = js["categories"]
+        else:
+            cats = []
+
+        stats = []
+        for cat in cats:
+            for s in cat.get("stats", []):
+                stats.append({
+                    "name": s.get("athlete", {}).get("displayName"),
+                    "team": s.get("athlete", {}).get("team", {}).get("abbreviation"),
+                    "category": cat.get("displayName"),
+                    "stat": s.get("name"),
+                    "value": s.get("value")
+                })
+        df = pd.DataFrame(stats)
+        if not df.empty:
+            df = df.pivot_table(index=["name", "team"], columns="stat", values="value", aggfunc="first").reset_index()
+            return df
+        raise ValueError("ESPN returned empty dataset.")
+
+    except Exception:
+        # fallback to NFLFastR (live 2025 week-by-week data)
+        try:
+            url = "https://raw.githubusercontent.com/nflverse/nflfastR-data/master/data/player_stats.csv.gz"
+            df = pd.read_csv(url, compression="gzip")
+            df = df[df["season"] == 2025]
+            keep = ["player_display_name", "recent_team", "passing_yards", "rushing_yards", "receiving_yards", "passing_tds", "rushing_tds", "receiving_tds"]
+            df = df[keep].groupby(["player_display_name", "recent_team"]).mean().reset_index()
+            df.rename(columns={"player_display_name": "name", "recent_team": "team"}, inplace=True)
+            return df
+        except Exception as e:
+            st.error(f"Both ESPN and fallback sources unavailable: {e}")
+            return pd.DataFrame()
+
 
 @st.cache_data(ttl=600)
 def get_espn_defense_ranks():
