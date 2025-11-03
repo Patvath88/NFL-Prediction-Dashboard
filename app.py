@@ -35,13 +35,18 @@ CURRENT_YEAR = 2025
 
 # --------------- DATA LOADERS -----------------
 @st.cache_data(ttl=600)
+de@st.cache_data(ttl=600)
 def get_players():
+    """Fetch all *currently rostered* NFL players from Sleeper API."""
     url = "https://api.sleeper.app/v1/players/nfl"
     r = requests.get(url)
     players = r.json()
     data = []
     for pid, info in players.items():
-        if info.get("status") == "Active" and info.get("team"):
+        team = info.get("team")
+        status = info.get("status")
+        # ✅ Only include players who are on an active NFL roster (not None, IR, or FA)
+        if team not in [None, "", "FA", "FA*"] and status == "Active":
             positions = info.get("fantasy_positions")
             if isinstance(positions, list):
                 pos_str = ",".join(positions)
@@ -52,42 +57,18 @@ def get_players():
             data.append({
                 "player_id": pid,
                 "name": info.get("full_name"),
-                "team": info.get("team"),
+                "team": team,
                 "position": pos_str,
                 "age": info.get("age"),
                 "height": info.get("height"),
                 "weight": info.get("weight"),
                 "college": info.get("college"),
             })
-    return pd.DataFrame(data)
+    df = pd.DataFrame(data)
+    # Remove duplicates & sort by team for cleaner dropdowns
+    df = df.drop_duplicates(subset=["name"]).sort_values(by=["team", "position", "name"])
+    return df.reset_index(drop=True)
 
-@st.cache_data(ttl=600)
-def get_live_stats():
-    url = "https://api.sleeper.app/v1/stats/regular/2025"
-    try:
-        r = requests.get(url)
-        stats = pd.DataFrame(r.json())
-        return stats
-    except Exception:
-        return pd.DataFrame()
-
-players_df = get_players()
-stats_df = get_live_stats()
-
-if stats_df.empty:
-    st.warning("⚠️ Sleeper stats not yet available — using simulated data.")
-    stats_df = pd.DataFrame({
-        "player_id": np.random.choice(players_df["player_id"], 300),
-        "passing_yards": np.random.randint(50, 400, 300),
-        "passing_tds": np.random.randint(0, 4, 300),
-        "rushing_yards": np.random.randint(10, 150, 300),
-        "rushing_tds": np.random.randint(0, 3, 300),
-        "receiving_yards": np.random.randint(10, 150, 300),
-        "receiving_tds": np.random.randint(0, 3, 300),
-        "receptions": np.random.randint(0, 12, 300),
-    })
-
-df = pd.merge(players_df, stats_df, on="player_id", how="inner")
 
 # --------------- TABS -----------------
 tabs = st.tabs(["🏆 Leaders", "👤 Player Insights", "📈 Game Trends"])
