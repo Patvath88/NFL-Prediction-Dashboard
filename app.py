@@ -35,9 +35,12 @@ def get_players():
 @st.cache_data(ttl=600)
 def get_espn_season_stats():
     """
-    Hybrid stat puller: tries ESPN live JSON, falls back to NFLFastR public CSV feed.
-    Guarantees non-empty data for 2025 season.
+    Hybrid live stats puller: ESPN first, fallback to nfl_data_py for 2025 season.
+    Ensures active player data even if ESPN JSON is limited.
     """
+    import nfl_data_py as nfl
+
+    # --- Try ESPN live ---
     try:
         url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/statistics"
         js = requests.get(url, timeout=10).json()
@@ -48,16 +51,12 @@ def get_espn_season_stats():
                     cats += child["categories"]
         elif "categories" in js:
             cats = js["categories"]
-        else:
-            cats = []
-
         stats = []
         for cat in cats:
             for s in cat.get("stats", []):
                 stats.append({
                     "name": s.get("athlete", {}).get("displayName"),
                     "team": s.get("athlete", {}).get("team", {}).get("abbreviation"),
-                    "category": cat.get("displayName"),
                     "stat": s.get("name"),
                     "value": s.get("value")
                 })
@@ -65,20 +64,21 @@ def get_espn_season_stats():
         if not df.empty:
             df = df.pivot_table(index=["name", "team"], columns="stat", values="value", aggfunc="first").reset_index()
             return df
-        raise ValueError("ESPN returned empty dataset.")
+        else:
+            raise ValueError("ESPN returned empty data.")
 
     except Exception:
-        # fallback to NFLFastR (live 2025 week-by-week data)
+        # --- Fallback: use nfl_data_py (active weekly player stats) ---
         try:
-            url = "https://raw.githubusercontent.com/nflverse/nflfastR-data/master/data/player_stats.csv.gz"
-            df = pd.read_csv(url, compression="gzip")
-            df = df[df["season"] == 2025]
-            keep = ["player_display_name", "recent_team", "passing_yards", "rushing_yards", "receiving_yards", "passing_tds", "rushing_tds", "receiving_tds"]
-            df = df[keep].groupby(["player_display_name", "recent_team"]).mean().reset_index()
+            df = nfl.import_weekly_data([2025])
+            df = df[df["season_type"] == "REG"]
+            df = df.groupby(["player_display_name", "recent_team"], as_index=False)[
+                ["passing_yards", "passing_tds", "rushing_yards", "rushing_tds", "receiving_yards", "receiving_tds"]
+            ].mean()
             df.rename(columns={"player_display_name": "name", "recent_team": "team"}, inplace=True)
             return df
         except Exception as e:
-            st.error(f"Both ESPN and fallback sources unavailable: {e}")
+            st.error(f"Could not load data from nfl_data_py: {e}")
             return pd.DataFrame()
 
 
